@@ -1,0 +1,16 @@
+# Backend
+backend/node_modules/
+backend/dist/
+backend/.env
+
+# macOS / Xcode
+.DS_Store
+**/xcuserdata/
+**/DerivedData/
+*.xcuserstate
+ios/build/
+
+# IDE
+.idea/
+.vscode/
+*.swp

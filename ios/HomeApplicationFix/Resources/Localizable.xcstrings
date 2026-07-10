@@ -1,0 +1,312 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "common.loading" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading…" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang tải…" } }
+      }
+    },
+    "common.close" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đóng" } }
+      }
+    },
+    "common.cancel" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Huỷ" } }
+      }
+    },
+    "common.retry" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thử lại" } }
+      }
+    },
+    "tab.explore" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Explore" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Khám phá" } }
+      }
+    },
+    "tab.profile" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Profile" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hồ sơ" } }
+      }
+    },
+    "auth.title" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập" } }
+      }
+    },
+    "auth.subtitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Create an account to buy modules and keep your purchases." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng ký tài khoản để mua gói và lưu lịch sử mua hàng." } }
+      }
+    },
+    "auth.login" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Log in" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập" } }
+      }
+    },
+    "auth.register" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Register" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng ký" } }
+      }
+    },
+    "auth.name" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Full name" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Họ tên" } }
+      }
+    },
+    "auth.email" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Email" } }
+      }
+    },
+    "auth.password" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Password (min 8)" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mật khẩu (tối thiểu 8)" } }
+      }
+    },
+    "auth.google" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Continue with Gmail" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tiếp tục với Gmail" } }
+      }
+    },
+    "auth.privacyNote" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Demo content is free. Purchases require an account." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nội dung demo miễn phí. Mua gói cần có tài khoản." } }
+      }
+    },
+    "auth.success" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Signed in" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập thành công" } }
+      }
+    },
+    "auth.continue" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Continue" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tiếp tục" } }
+      }
+    },
+    "auth.googleDevTitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Gmail (dev)" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Gmail (dev)" } }
+      }
+    },
+    "auth.googleDevMessage" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a Gmail to simulate Google Sign-In. Configure Google client IDs for production." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nhập Gmail để giả lập Google Sign-In. Cấu hình Google client ID khi lên production." } }
+      }
+    },
+    "auth.googleCancelled" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Google sign-in cancelled" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã huỷ đăng nhập Google" } }
+      }
+    },
+    "auth.googleMissingConfig" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Google client ID is not configured" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa cấu hình Google client ID" } }
+      }
+    },
+    "catalog.modules" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Modules" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Gói / Module" } }
+      }
+    },
+    "catalog.all" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tất cả" } }
+      }
+    },
+    "catalog.owned" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Owned" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã mua" } }
+      }
+    },
+    "catalog.demoAvailable" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Free demo" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xem demo" } }
+      }
+    },
+    "catalog.errorTitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cannot load data" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không tải được dữ liệu" } }
+      }
+    },
+    "module.detail" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Module" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chi tiết gói" } }
+      }
+    },
+    "module.demo" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Demo (free)" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Demo (miễn phí)" } }
+      }
+    },
+    "module.full" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Full content" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nội dung đầy đủ" } }
+      }
+    },
+    "module.unlock" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unlock full module" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở khoá gói đầy đủ" } }
+      }
+    },
+    "module.unlockHint" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "One-time Non-Consumable purchase. Sign in required." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mua một lần (Non-Consumable). Cần đăng nhập." } }
+      }
+    },
+    "module.buy" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Buy module" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mua gói" } }
+      }
+    },
+    "module.buyPrice" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Buy — %@" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mua — %@" } }
+      }
+    },
+    "module.noDemo" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No demo items" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa có demo" } }
+      }
+    },
+    "module.noFull" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No full content yet" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa có nội dung full" } }
+      }
+    },
+    "module.invalidURL" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Invalid content URL" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "URL nội dung không hợp lệ" } }
+      }
+    },
+    "module.openDocument" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open document" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở tài liệu" } }
+      }
+    },
+    "iap.cancelled" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purchase cancelled" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã huỷ mua hàng" } }
+      }
+    },
+    "iap.pending" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purchase pending approval" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Giao dịch đang chờ duyệt" } }
+      }
+    },
+    "iap.unknown" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown purchase state" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Trạng thái mua không xác định" } }
+      }
+    },
+    "iap.productMissing" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Product not found on App Store" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không tìm thấy sản phẩm trên App Store" } }
+      }
+    },
+    "iap.success" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purchase successful" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mua thành công" } }
+      }
+    },
+    "profile.purchases" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purchased modules" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Gói đã mua" } }
+      }
+    },
+    "profile.noPurchases" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "You have not purchased any modules yet." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bạn chưa mua gói nào." } }
+      }
+    },
+    "profile.restore" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore purchases" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Khôi phục mua hàng" } }
+      }
+    },
+    "profile.restoreDone" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Restore completed" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã khôi phục" } }
+      }
+    },
+    "profile.logout" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Log out" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng xuất" } }
+      }
+    },
+    "profile.guestTitle" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "You are browsing as guest" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bạn đang xem với tư cách khách" } }
+      }
+    },
+    "profile.guestBody" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in to buy modules and see your library." } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập để mua gói và xem thư viện của bạn." } }
+      }
+    },
+    "profile.about" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "About" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thông tin" } }
+      }
+    },
+    "profile.appName" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "App" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ứng dụng" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

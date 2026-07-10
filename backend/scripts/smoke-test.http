@@ -1,0 +1,36 @@
+### Home Application Fix API — smoke tests (REST Client / VS Code)
+@base = http://localhost:4000
+
+### Health
+GET {{base}}/health
+
+### Register
+POST {{base}}/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user1@example.com",
+  "password": "password123",
+  "name": "User One"
+}
+
+### Login
+# @name login
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "user1@example.com",
+  "password": "password123"
+}
+
+### Modules catalog
+GET {{base}}/api/modules
+
+### Google (dev idToken — payload only)
+POST {{base}}/api/auth/google
+Content-Type: application/json
+
+{
+  "idToken": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJkZXYtZ29vZ2xlLTEiLCJlbWFpbCI6ImRlbW8udXNlckBnbWFpbC5jb20iLCJuYW1lIjoiRGVtbyBVc2VyIiwiZW1haWxfdmVyaWZpZWQiOnRydWV9.dev"
+}
