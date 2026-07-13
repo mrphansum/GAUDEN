@@ -1,0 +1,515 @@
+================================================================================
+  HOME APPLICATION FIX (GAUDEN)
+  DATA FLOW — Luồng dữ liệu chi tiết (request / response / storage)
+================================================================================
+  Bổ sung cho: docs/LUONG_HOAT_DONG.txt (luồng nghiệp vụ UI)
+  File này: dữ liệu đi đâu, hình dạng ra sao, lưu ở đâu, ai đọc/ghi.
+  Cập nhật: 2026-07-10
+================================================================================
+
+
+1. BẢN ĐỒ LƯU TRỮ DỮ LIỆU (WHERE DATA LIVES)
+--------------------------------------------------------------------------------
+
+  +---------------------------+----------------------------------------------+
+  | Nơi lưu                   | Dữ liệu                                      |
+  +---------------------------+----------------------------------------------+
+  | MongoDB — users           | email, name, passwordHash?, googleId?,       |
+  |                           | providers[], avatarUrl, timestamps           |
+  +---------------------------+----------------------------------------------+
+  | MongoDB — refreshtokens   | userId, tokenHash (SHA-256), expiresAt,      |
+  |                           | revokedAt?, userAgent?                       |
+  +---------------------------+----------------------------------------------+
+  | MongoDB — modules        | slug, title, category, appleProductId,       |
+  |                           | demoContent[], fullContent[], isPublished    |
+  +---------------------------+----------------------------------------------+
+  | MongoDB — purchases      | userId, moduleId, appleProductId,            |
+  |                           | transactionId (unique), source, purchasedAt  |
+  +---------------------------+----------------------------------------------+
+  | iOS Keychain              | accessToken, refreshToken, refreshExpiresAt  |
+  |                           | (KHÔNG lưu password, KHÔNG UserDefaults)     |
+  +---------------------------+----------------------------------------------+
+  | iOS memory (AppState)     | user object hiện tại, toast, pending purchase|
+  |                           | (mất khi kill app; session lấy lại từ        |
+  |                           |  Keychain + /api/me)                         |
+  +---------------------------+----------------------------------------------+
+  | App Store / StoreKit      | Product price, transaction, JWS signed tx    |
+  |                           | (Apple giữ ledger Non-Consumable)            |
+  +---------------------------+----------------------------------------------+
+  | Backend .env (Windows)    | JWT secrets, Mongo URI, Google client IDs,   |
+  |                           | IAP_MOCK_VERIFY — không commit Git           |
+  +---------------------------+----------------------------------------------+
+
+  Nguồn sự thật (source of truth):
+    - "User là ai?"           --> MongoDB users + JWT sub
+    - "Đã mua module chưa?"   --> MongoDB purchases (sau verify)
+    - "Giá IAP?"              --> App Store (StoreKit Product.displayPrice)
+    - "Token còn hợp lệ?"     --> JWT signature/exp + refreshtokens hash
+
+
+2. MÔ HÌNH DỮ LIỆU (SCHEMA LOGIC)
+--------------------------------------------------------------------------------
+
+  User 1 -----< Purchase >----- 1 Module
+    |              |
+    |              +-- transactionId (từ Apple hoặc mock)
+    |              +-- appleProductId (denormalize để query nhanh)
+    |
+    +-----< RefreshToken  (nhiều thiết bị / nhiều phiên)
+
+  Module
+    +-- appleProductId  <== map 1-1 với IAP Non-Consumable
+    +-- demoContent[]   : { type, title, url, description?, durationSeconds? }
+    +-- fullContent[]   : cùng shape; CHỈ trả khi owned
+
+
+3. DATA FLOW — AUTH EMAIL (REGISTER / LOGIN)
+--------------------------------------------------------------------------------
+
+  [iOS AuthView]
+    name, email, password  (plain chỉ trên wire lúc POST, không lưu Keychain)
+           |
+           |  HTTPS/HTTP JSON
+           v
+  [POST /api/auth/register]  hoặc  [POST /api/auth/login]
+           |
+           |  Backend xử lý dữ liệu:
+           |    register: password --> bcrypt hash --> users.passwordHash
+           |    login:    password + hash --> bcrypt.compare
+           |
+           |  Tạo:
+           |    accessToken  = JWT { sub: userId, email, type:"access" }
+           |                   ký bằng JWT_ACCESS_SECRET, exp ngắn
+           |    refreshToken = random bytes (base64url)  <-- plain chỉ trả 1 lần
+           |    tokenHash    = SHA-256(refreshToken)     <-- lưu Mongo
+           |
+           v
+  Response JSON:
+  {
+    "user": {
+      "id": "...",
+      "email": "...",
+      "name": "...",
+      "avatarUrl": null,
+      "providers": ["local"]
+    },
+    "tokens": {
+      "accessToken": "<jwt>",
+      "refreshToken": "<opaque>",
+      "refreshExpiresAt": "2026-...",
+      "tokenType": "Bearer"
+    }
+  }
+           |
+           v
+  [iOS TokenStore / Keychain]
+    accessToken  --> Keychain key "accessToken"
+    refreshToken --> Keychain key "refreshToken"
+    refreshExpiresAt --> Keychain (optional metadata)
+           |
+           v
+  [iOS AppState.user] = user object (RAM)
+  Các API sau: Header  Authorization: Bearer <accessToken>
+
+
+4. DATA FLOW — AUTH GMAIL (GOOGLE)
+--------------------------------------------------------------------------------
+
+  [iOS GoogleSignInHelper]
+    idToken (JWT từ Google SDK hoặc dev JWT)
+           |
+           |  POST /api/auth/google  { "idToken": "..." }
+           v
+  [Backend googleAuthService]
+    idToken
+      --> verify (google-auth-library)  audience = GOOGLE_CLIENT_ID / IOS
+      --> payload: sub, email, name, picture, email_verified
+           |
+           |  Map dữ liệu:
+           |    googleId = sub
+           |    email    = email (lowercase)
+           |    name, avatarUrl
+           |
+           |  Upsert User:
+           |    find { googleId } OR { email }
+           |    create / link providers += "google"
+           |
+           v
+  Response: cùng shape AuthResponse như mục 3
+           |
+           v
+  Keychain + AppState  (giống login email)
+
+  Lưu ý data:
+    - Không có passwordHash nếu user chỉ Google.
+    - User local + Google cùng email: 1 document User, providers = [local, google].
+
+
+5. DATA FLOW — REFRESH TOKEN ROTATION
+--------------------------------------------------------------------------------
+
+  Request bị 401 (access hết hạn)
+           |
+           |  POST /api/auth/refresh
+           |  Body: { "refreshToken": "<plain từ Keychain>" }
+           v
+  Backend:
+    plain --> SHA-256 --> tìm refreshtokens.tokenHash
+      |
+      +-- không thấy / hết hạn / revoked --> 401, không cấp token
+      |
+      +-- hợp lệ:
+            1) set revokedAt = now  (token cũ chết)
+            2) issue refresh MỚI + hash MỚI vào DB
+            3) issue access JWT mới
+           |
+           v
+  Response: AuthResponse mới (user + tokens mới)
+           |
+           v
+  iOS: ghi đè Keychain bằng tokens mới
+       retry request gốc với accessToken mới
+
+  Dữ liệu NHẠY CẢM:
+    - Plain refresh token chỉ tồn tại: response wire + iOS Keychain
+    - Mongo CHỈ có hash --> DB leak không dùng lại được token plain
+
+
+6. DATA FLOW — CATALOG (LIST MODULES)
+--------------------------------------------------------------------------------
+
+  [CatalogView]
+    GET /api/modules[?category=...]
+    Header Authorization?  (optional — nếu có thì tính owned)
+           |
+           v
+  Backend:
+    modules = Module.find({ isPublished: true }).sort(sortOrder)
+    if user:
+      ownedIds = Purchase.find({ userId }).map(moduleId)
+    categories = unique(modules.category)
+           |
+           v
+  Response:
+  {
+    "modules": [
+      {
+        "id": "...",
+        "slug": "module-1-home-basics",
+        "title": "Gói 1 — Home Basics",
+        "subtitle": "...",
+        "description": "...",
+        "category": "Home Repair",
+        "appleProductId": "com.mrphansum.homeapplicationfix.module1",
+        "coverImageUrl": "https://...",
+        "demoCount": 2,
+        "owned": false,
+        "sortOrder": 1
+      }
+    ],
+    "categories": ["Home Repair"]
+  }
+           |
+           v
+  iOS: modules[] + categories[] trong ViewModel (RAM)
+       KHÔNG cache vĩnh viễn — pull-to-refresh gọi lại API
+
+  Data ẩn (không trả list):
+    - fullContent URLs
+    - passwordHash, tokenHash
+
+
+7. DATA FLOW — MODULE DETAIL + DEMO / FULL
+--------------------------------------------------------------------------------
+
+  GET /api/modules/:idOrSlug
+           |
+           v
+  Backend build response:
+    base fields (như list)
+    + demoContent:  LUÔN gửi (free)
+    + fullContent:  owned ? fullContent : null
+    + requiresPurchase: !owned
+           |
+           v
+  Response (chưa mua):
+  {
+    "module": {
+      "...": "...",
+      "owned": false,
+      "demoContent": [
+        {
+          "type": "document",
+          "title": "Demo — Checklist...",
+          "url": "https://.../dummy.pdf",
+          "description": "..."
+        },
+        {
+          "type": "video",
+          "title": "Demo — ...",
+          "url": "https://.../BigBuckBunny.mp4",
+          "durationSeconds": 60
+        }
+      ],
+      "fullContent": null,
+      "requiresPurchase": true
+    }
+  }
+           |
+           v
+  iOS ModuleDetailView:
+    demoContent --> ContentListView --> VideoPlayer / Link mở URL
+    fullContent == null --> hiện purchase card
+    fullContent != null --> list full items
+
+  GET /api/modules/:id/content  (bắt buộc Bearer + owned)
+    --> chỉ fullContent; 403 nếu chưa mua
+    --> dùng khi cần load full riêng, không lộ URL trên list guest
+
+
+8. DATA FLOW — MUA HÀNG IAP + VERIFY (PURCHASE PIPELINE)
+--------------------------------------------------------------------------------
+
+  8.1 Dữ liệu từ App Store (StoreKit 2)
+  --------------------------------------
+  Product:
+    id          = appleProductId (khớp Module.appleProductId)
+    displayPrice, displayName  (UI giá)
+
+  Transaction (sau purchase success):
+    id                    --> transactionId (String)
+    originalID            --> originalTransactionId
+    productID             --> productId
+    VerificationResult.jwsRepresentation --> signedTransaction (JWS string)
+
+  8.2 iOS gửi server
+  ------------------
+  POST /api/iap/verify
+  Authorization: Bearer <accessToken>
+  {
+    "productId": "com.mrphansum.homeapplicationfix.module1",
+    "transactionId": "1000000123456789",
+    "originalTransactionId": "1000000123456789",
+    "signedTransaction": "eyJhbGciOiJFUzI1NiI..."   // optional khi mock
+  }
+
+  8.3 Backend biến đổi dữ liệu
+  ----------------------------
+    productId --> Module.findOne({ appleProductId })
+    verify:
+      mock:  check productId + transactionId có giá trị
+      prod:  parse JWS payload, so productId/transactionId/bundleId
+    ghi Purchase:
+    {
+      userId: ObjectId(user từ JWT),
+      moduleId: ObjectId(module),
+      appleProductId: productId,
+      transactionId: unique,
+      originalTransactionId: ...,
+      source: "mock" | "apple_iap",
+      purchasedAt: Date
+    }
+    Index unique: (userId, moduleId), (transactionId)
+
+  8.4 Response verify
+  -------------------
+  {
+    "ok": true,
+    "alreadyOwned": false,
+    "purchase": {
+      "id": "...",
+      "moduleId": "...",
+      "appleProductId": "...",
+      "transactionId": "...",
+      "purchasedAt": "...",
+      "source": "mock"
+    },
+    "module": {
+      "id": "...",
+      "slug": "module-1-home-basics",
+      "title": "Gói 1 — Home Basics"
+    }
+  }
+           |
+           v
+  iOS: reload GET /api/modules/:id
+       --> owned=true, fullContent[] có data
+       Profile: GET /api/me/purchases  thấy bản ghi mới
+
+  8.5 DEBUG mock (không có App Store product)
+  -------------------------------------------
+  iOS sinh: transactionId = "mock-<productId>-<uuid>"
+  Không có signedTransaction
+  Backend IAP_MOCK_VERIFY=true --> source="mock"
+  Dữ liệu Purchase vẫn giống production về ownership
+
+
+9. DATA FLOW — PROFILE & PURCHASES
+--------------------------------------------------------------------------------
+
+  GET /api/me
+    JWT.sub --> User.findById
+    Out:
+    {
+      "user": {
+        "id", "email", "name", "avatarUrl", "providers", "createdAt"
+      }
+    }
+    (không có passwordHash)
+
+  GET /api/me/purchases
+    Purchase.find({ userId }).sort(purchasedAt desc)
+    join Module theo moduleId
+    Out:
+    {
+      "purchases": [
+        {
+          "id": "...",
+          "purchasedAt": "...",
+          "appleProductId": "...",
+          "transactionId": "...",
+          "source": "apple_iap",
+          "module": {
+            "id", "slug", "title", "subtitle", "category", "coverImageUrl"
+          }
+        }
+      ]
+    }
+           |
+           v
+  ProfileView bind purchases[] --> list UI "Gói đã mua"
+
+
+10. DATA FLOW — RESTORE
+--------------------------------------------------------------------------------
+
+  Apple ledger (thiết bị)                Server ledger (Mongo purchases)
+  ----------------------                --------------------------------
+  Transaction.currentEntitlements  -->  foreach productId in catalog
+                                         POST /iap/verify
+                                         (idempotent theo transactionId
+                                          và unique userId+moduleId)
+
+  Kết quả data:
+    - Purchase đã có cùng transactionId + đúng user --> alreadyOwned
+    - Chưa có --> insert Purchase gắn user hiện tại
+    - transactionId đã thuộc user khác --> 409 (không chuyển ownership tự động)
+
+
+11. DATA FLOW — LOGOUT
+--------------------------------------------------------------------------------
+
+  In:  { refreshToken }  (plain từ Keychain)
+  Backend: RefreshToken.update  revokedAt = now  (theo tokenHash)
+  Out: { ok: true }
+
+  iOS:
+    Keychain.clearAll()
+    AppState.user = null
+    purchases local = []
+
+  Dữ liệu CÒN trên server:
+    User, Purchase (vẫn giữ — login lại vẫn thấy gói đã mua)
+  Dữ liệu MẤT trên device:
+    tokens, session RAM
+
+
+12. DATA FLOW — LỖI & MÃ HTTP (ẢNH HƯỞNG UI)
+--------------------------------------------------------------------------------
+
+  +--------+---------------------------+----------------------------------+
+  | HTTP   | Ý nghĩa data              | iOS xử lý                        |
+  +--------+---------------------------+----------------------------------+
+  | 200    | body JSON hợp lệ          | decode DTO, update UI            |
+  | 400    | validation / IAP fail     | toast message từ body.message    |
+  | 401    | token invalid/expired     | refresh 1 lần; fail --> logout   |
+  | 403    | chưa own module           | hiện CTA mua / PurchaseRequired  |
+  | 404    | module/user không có      | empty / error state              |
+  | 409    | email trùng / tx conflict | hiện lỗi đăng ký / verify        |
+  +--------+---------------------------+----------------------------------+
+
+  Error body chuẩn:
+  { "error": "ErrorCode", "message": "human readable" }
+
+
+13. DATA FLOW — SEED GÓI 1 (WINDOWS)
+--------------------------------------------------------------------------------
+
+  npm run seed
+    đọc .env MONGODB_URI
+    upsert Module:
+      slug: module-1-home-basics
+      appleProductId: com.mrphansum.homeapplicationfix.module1
+      category: Home Repair
+      demoContent: [document URL, video URL]
+      fullContent: [documents + video full URLs]
+
+  Sau seed, data path:
+    GET /api/modules  -->  iOS catalog thấy Gói 1
+    Chưa có User/Purchase cho đến khi register + verify
+
+
+14. SƠ ĐỒ DATA PATH TỔNG (ASCII)
+--------------------------------------------------------------------------------
+
+  ┌──────────────┐     JSON/JWT      ┌─────────────────┐     documents
+  │  iOS App     │ ◄──────────────►  │  Express API    │ ─────────────► MongoDB
+  │              │                   │                 │
+  │ Keychain     │                   │ tokenService    │── hash ──► refreshtokens
+  │  tokens      │                   │ googleAuth      │── upsert ► users
+  │              │                   │ iapService      │── insert ► purchases
+  │ AppState     │                   │ modules routes  │── read  ─► modules
+  │  user RAM    │                   └────────┬────────┘
+  │              │                            │
+  │ StoreKit     │◄── price/tx/JWS ── App Store (Apple)
+  └──────────────┘
+
+  Content media (PDF/MP4):
+    URL string trong Module.demoContent / fullContent
+    --> iOS mở trực tiếp (VideoPlayer / Link)
+    --> file media KHÔNG đi qua Mongo binary; chỉ lưu URL metadata
+
+
+15. QUY TẮC BIÊN GIỚI DỮ LIỆU (KHÔNG LỘ / KHÔNG TIN MÙ QUÁNG)
+--------------------------------------------------------------------------------
+
+  KHÔNG bao giờ trả về client:
+    - passwordHash
+    - refresh token hash
+    - JWT secrets
+    - fullContent khi !owned
+
+  KHÔNG tin client:
+    - "tôi đã mua" mà không có Purchase sau verify
+    - tự set owned flag local làm source of truth
+
+  TIN:
+    - JWT access hợp lệ (sau verify signature)
+    - Purchase document sau /iap/verify
+    - Google idToken đã verify (production)
+
+
+16. VÍ DỤ CHUỖI DATA THỰC TẾ (HAPPY PATH)
+--------------------------------------------------------------------------------
+
+  1) Seed:  modules ← Gói 1
+  2) Register: users ← An / an@mail.com
+               refreshtokens ← hash(R1)
+               Keychain ← accessA1, refresh R1
+  3) GET modules: owned=false cho Gói 1
+  4) GET modules/module-1: demoContent[2], fullContent=null
+  5) Purchase StoreKit: tx=T100
+  6) POST iap/verify: purchases ← { user:An, module:Gói1, tx:T100 }
+  7) GET modules/module-1: owned=true, fullContent[3]
+  8) GET me/purchases: 1 item Gói 1
+  9) access hết hạn → refresh: R1 revoked, R2 issued, Keychain cập nhật
+ 10) Logout: R2 revoked, Keychain rỗng; purchases trên Mongo vẫn còn
+ 11) Login lại: GET me/purchases vẫn thấy Gói 1
+
+
+================================================================================
+  Hết DATA FLOW
+  File: docs/DATA_FLOW.txt
+  Xem thêm: docs/LUONG_HOAT_DONG.txt
+  Repo: https://github.com/mrphansum/GAUDEN
+================================================================================
