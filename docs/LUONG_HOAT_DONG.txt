@@ -1,0 +1,431 @@
+================================================================================
+  HOME APPLICATION FIX (GAUDEN)
+  Giải thích rõ luồng hoạt động hệ thống
+================================================================================
+  App iOS: Home Application Fix
+  Bundle ID: com.mrphansum.homeapplicationfix
+  Backend: Express + TypeScript + MongoDB
+  IAP: Non-Consumable (Module / Add-on / DLC)
+  Cập nhật: 2026-07-10
+================================================================================
+
+
+1. TỔNG QUAN HỆ THỐNG
+--------------------------------------------------------------------------------
+
+  Hệ thống gồm 2 phần chính:
+
+  [A] Ứng dụng iOS (SwiftUI)
+      - Người dùng xem catalog, demo, đăng ký/đăng nhập, mua gói, xem profile.
+      - Token đăng nhập lưu trong Keychain (không lưu UserDefaults).
+      - Giao dịch mua hàng qua StoreKit 2, sau đó báo server để ghi quyền sở hữu.
+
+  [B] Backend API (chạy trên máy Windows / server)
+      - Quản lý user, module (gói bán), entitlement (gói đã mua).
+      - Xác thực JWT + refresh token.
+      - Verify IAP và là "nguồn sự thật" (source of truth) về việc đã mua hay chưa.
+
+  MongoDB lưu:
+    - User (tài khoản)
+    - RefreshToken (hash refresh token)
+    - Module (gói DLC / Add-on)
+    - Purchase (gói user đã mua)
+
+
+2. AI ĐƯỢC LÀM GÌ? (PHÂN QUYỀN NỘI DUNG)
+--------------------------------------------------------------------------------
+
+  +------------------+------------------+------------------+------------------+
+  | Trạng thái       | Xem catalog      | Xem demo         | Full content     |
+  |                  | + danh mục       | (doc/video)      | + mua IAP        |
+  +------------------+------------------+------------------+------------------+
+  | Khách (guest)    | Có               | Có               | Không            |
+  |                  |                  |                  | Mua → bắt login  |
+  +------------------+------------------+------------------+------------------+
+  | User đã login    | Có               | Có               | Chỉ gói đã mua   |
+  | chưa mua gói     |                  |                  | Có thể bấm Mua   |
+  +------------------+------------------+------------------+------------------+
+  | User đã mua gói  | Có               | Có               | Có (full)        |
+  +------------------+------------------+------------------+------------------+
+
+  Quy tắc nghiệp vụ quan trọng:
+  - Demo luôn miễn phí, không cần tài khoản.
+  - Mua gói Non-Consumable BẮT BUỘC đăng ký / đăng nhập trước.
+  - App KHÔNG tự tin "đã mua" chỉ từ client; server phải verify và ghi Purchase.
+
+
+3. LUỒNG KHỞI ĐỘNG APP (BOOTSTRAP)
+--------------------------------------------------------------------------------
+
+  (1) User mở app Home Application Fix
+           |
+           v
+  (2) AppState.bootstrap()
+           |
+           +--> Keychain có access + refresh token?
+           |         |
+           |        YES --> Gọi GET /api/me (Bearer access token)
+           |         |         |
+           |         |        OK --> Gắn user vào session (đã login)
+           |         |         |
+           |         |      401/lỗi --> Thử POST /api/auth/refresh
+           |         |                    |
+           |         |                   OK --> Lưu token mới vào Keychain
+           |         |                          Gọi lại /api/me
+           |         |                    |
+           |         |                  FAIL --> Xóa Keychain, coi như guest
+           |         |
+           |         NO --> Session guest (chưa login)
+           |
+           v
+  (3) Hiển thị Tab chính:
+        - Tab "Khám phá" (Catalog)
+        - Tab "Hồ sơ" (Profile)
+
+
+4. LUỒNG XEM CATALOG & DANH MỤC
+--------------------------------------------------------------------------------
+
+  (1) CatalogView load
+           |
+           v
+  (2) GET /api/modules
+      - Nếu có token: gửi Authorization (optionalAuth)
+      - Server trả:
+          * danh sách Module (Gói 1, sau này Gói 2...)
+          * categories (danh mục)
+          * owned = true/false cho từng gói (nếu đã login)
+           |
+           v
+  (3) UI hiển thị:
+      - Chip lọc theo danh mục (All / Home Repair / ...)
+      - Card từng module: tiêu đề, category, badge "Xem demo" hoặc "Đã mua"
+           |
+           v
+  (4) User chạm 1 module --> ModuleDetailView
+
+
+5. LUỒNG XEM CHI TIẾT + DEMO (FREE)
+--------------------------------------------------------------------------------
+
+  (1) GET /api/modules/:id
+      (có token nếu đã login)
+           |
+           v
+  (2) Server trả:
+      - Thông tin gói
+      - demoContent[]  --> luôn có (PDF, video demo...)
+      - fullContent    --> CHỈ khi user đã own module
+                         (guest / chưa mua: fullContent = null)
+           |
+           v
+  (3) UI:
+      - Section "Demo (miễn phí)": mở document / phát video
+      - Nếu owned: Section "Nội dung đầy đủ"
+      - Nếu chưa owned: Card "Mở khoá gói" + nút Mua
+
+
+6. LUỒNG ĐĂNG KÝ / ĐĂNG NHẬP (EMAIL)
+--------------------------------------------------------------------------------
+
+  A) ĐĂNG KÝ
+  ----------
+  (1) User nhập: họ tên, email, mật khẩu (>= 8 ký tự)
+           |
+           v
+  (2) POST /api/auth/register
+      Body: { name, email, password }
+           |
+           v
+  (3) Backend:
+      - Kiểm tra email trùng?
+      - Hash password bằng bcrypt
+      - Tạo User (providers: ["local"])
+      - Tạo access JWT (ngắn hạn, ví dụ 15 phút)
+      - Tạo refresh token ngẫu nhiên
+          * Lưu HASH (SHA-256) vào collection RefreshToken
+          * Trả plain refresh token về client 1 lần
+           |
+           v
+  (4) iOS:
+      - Lưu accessToken + refreshToken vào Keychain
+      - Cập nhật AppState.user
+      - Đóng sheet auth
+
+
+  B) ĐĂNG NHẬP EMAIL
+  ------------------
+  (1) POST /api/auth/login  { email, password }
+           |
+           v
+  (2) Backend so khớp bcrypt --> cấp cặp token như trên
+           |
+           v
+  (3) iOS lưu Keychain + cập nhật UI
+
+
+7. LUỒNG ĐĂNG NHẬP / ĐĂNG KÝ BẰNG GMAIL (GOOGLE)
+--------------------------------------------------------------------------------
+
+  Mục tiêu: user dùng tài khoản Gmail, không cần tạo mật khẩu local.
+
+  (1) User bấm "Tiếp tục với Gmail"
+           |
+           v
+  (2) iOS lấy Google idToken
+      - Production: Google Sign-In SDK (cần cấu hình Client ID)
+      - Dev hiện tại: form nhập Gmail --> tạo JWT dev (payload email/name/sub)
+        Backend development có thể decode khi chưa set GOOGLE_CLIENT_ID
+           |
+           v
+  (3) POST /api/auth/google
+      Body: { idToken }
+           |
+           v
+  (4) Backend googleAuthService:
+      - Verify idToken với Google (khi đã cấu hình GOOGLE_CLIENT_ID)
+      - Lấy: googleId, email, name, avatar
+      - Tìm user theo googleId hoặc email
+          * Chưa có  --> tạo User mới (providers: ["google"])
+          * Đã có    --> gắn googleId nếu thiếu, thêm provider "google"
+           |
+           v
+  (5) Cấp access + refresh token (giống login email)
+           |
+           v
+  (6) iOS lưu Keychain, vào session đã login
+
+  Lưu ý:
+  - Nếu user từng đăng ký email/password rồi login Google cùng email:
+    server LINK tài khoản (cùng 1 User), không tạo user trùng.
+
+
+8. LUỒNG REFRESH TOKEN (TỰ ĐỘNG)
+--------------------------------------------------------------------------------
+
+  Access token hết hạn nhanh để giảm rủi ro nếu bị lộ.
+  Refresh token sống lâu hơn, lưu Keychain, dùng để lấy access mới.
+
+  (1) APIClient gọi API có Authorization, server trả 401
+           |
+           v
+  (2) APIClient gọi 1 lần: POST /api/auth/refresh
+      Body: { refreshToken }
+           |
+           v
+  (3) Backend:
+      - Hash refreshToken, tìm trong DB
+      - Còn hạn + chưa revoke?
+          * YES: REVOKE token cũ (rotation)
+                 Cấp refresh token MỚI + access token MỚI
+          * NO:  401 InvalidRefreshToken
+           |
+           v
+  (4) iOS:
+      - Lưu token mới vào Keychain
+      - Retry request API ban đầu với access token mới
+           |
+           v
+  (5) Nếu refresh fail --> logout local (xóa Keychain), user phải login lại
+
+  Vì sao rotate?
+  - Mỗi refresh chỉ dùng 1 lần; token cũ bị thu hồi.
+  - Giảm nguy cơ reuse refresh token bị đánh cắp.
+
+
+9. LUỒNG MUA GÓI (IAP NON-CONSUMABLE) — QUAN TRỌNG NHẤT
+--------------------------------------------------------------------------------
+
+  Product ví dụ Gói 1:
+    com.mrphansum.homeapplicationfix.module1
+  Loại: Non-Consumable = mua 1 lần, sở hữu vĩnh viễn (theo logic app + Apple).
+
+  Sơ đồ:
+
+    User bấm "Mua gói"
+            |
+            v
+    Đã login? ----NO----> Mở AuthView (đăng ký/đăng nhập/Gmail)
+            |                      |
+           YES <---- login xong ---+
+            |
+            v
+    StoreKit 2: Product.purchase(productId)
+            |
+            +-- User huỷ --> dừng, toast "Đã huỷ"
+            |
+            +-- Thành công --> nhận transaction + JWS
+            |
+            v
+    POST /api/iap/verify   (Bearer access token)
+    Body:
+      {
+        productId,
+        transactionId,
+        originalTransactionId?,
+        signedTransaction?   // JWS StoreKit 2
+      }
+            |
+            v
+    Backend iapService:
+      (a) Tìm Module theo appleProductId
+      (b) Verify giao dịch
+            - Dev:  IAP_MOCK_VERIFY=true  --> tin transactionId (test local)
+            - Prod: parse/verify JWS / App Store Server API (cần harden)
+      (c) Chống gian lận / trùng:
+            - transactionId đã gán user khác? --> 409
+            - user đã own module? --> trả alreadyOwned = true
+      (d) Tạo bản ghi Purchase (userId + moduleId unique)
+            |
+            v
+    iOS nhận ok --> reload chi tiết module
+            --> fullContent hiện ra
+            --> Profile "Gói đã mua" có Gói 1
+
+  DEBUG (chưa có product App Store):
+    - App tạo mock transactionId
+    - Backend IAP_MOCK_VERIFY=true ghi Purchase source="mock"
+    - Dùng để test end-to-end với backend Windows
+
+
+10. LUỒNG XEM FULL CONTENT SAU KHI MUA
+--------------------------------------------------------------------------------
+
+  Cách 1 — Từ detail module (đã owned):
+    GET /api/modules/:id  đã trả fullContent trong response
+
+  Cách 2 — API riêng (bắt buộc auth + entitlement):
+    GET /api/modules/:id/content
+         |
+         +-- chưa login --> 401
+         +-- login nhưng chưa mua --> 403 PurchaseRequired
+         +-- đã mua --> 200 + fullContent[]
+
+
+11. LUỒNG PROFILE & GÓI ĐÃ MUA
+--------------------------------------------------------------------------------
+
+  Guest:
+    - Thấy lời mời đăng nhập
+    - Không có list purchases
+
+  User đã login:
+    (1) GET /api/me              --> tên, email, providers, avatar
+    (2) GET /api/me/purchases    --> danh sách Purchase + thông tin Module
+    (3) UI Profile:
+          - Avatar chữ cái / tên / email
+          - Section "Gói đã mua"
+          - Nút "Khôi phục mua hàng" (Restore)
+          - Nút "Đăng xuất"
+
+
+12. LUỒNG RESTORE PURCHASES
+--------------------------------------------------------------------------------
+
+  Mục đích: máy mới / cài lại app / reinstall, lấy lại Non-Consumable từ Apple
+  và đồng bộ entitlement lên server gắn với user đang login.
+
+  (1) User bấm Restore (phải đang login)
+           |
+           v
+  (2) AppStore.sync() + đọc Transaction.currentEntitlements
+           |
+           v
+  (3) Với mỗi productId thuộc catalog:
+        POST /api/iap/verify (giống lúc mua)
+           |
+           v
+  (4) Server idempotent: đã có Purchase thì alreadyOwned, không tạo trùng
+           |
+           v
+  (5) Reload /api/me/purchases --> UI cập nhật
+
+
+13. LUỒNG ĐĂNG XUẤT
+--------------------------------------------------------------------------------
+
+  (1) POST /api/auth/logout  { refreshToken }
+      --> Server revoke refresh token (đánh dấu revokedAt)
+  (2) iOS xoá toàn bộ token trong Keychain
+  (3) AppState.user = null --> về guest
+  (4) Catalog vẫn xem được; full content / mua cần login lại
+
+
+14. LUỒNG THÊM GÓI MỚI SAU NÀY (MỞ RỘNG)
+--------------------------------------------------------------------------------
+
+  Không cần viết lại app từ đầu:
+
+  (1) Backend: thêm document Module mới (hoặc mở rộng seed)
+        - slug, title, category
+        - appleProductId mới (Non-Consumable trên App Store Connect)
+        - demoContent + fullContent
+  (2) App Store Connect: tạo IAP Non-Consumable cùng product id
+  (3) iOS: GET /api/modules tự hiện gói mới (catalog dynamic)
+  (4) Mua / verify / profile hoạt động giống Gói 1
+
+
+15. SƠ ĐỒ THÀNH PHẦN & API CHÍNH
+--------------------------------------------------------------------------------
+
+  iOS                         Backend                         MongoDB
+  ----                        -------                         -------
+  CatalogView --------GET---> /api/modules -----------------> Module
+  ModuleDetail -------GET---> /api/modules/:id -------------> Module
+  Auth email --------POST---> /api/auth/register|login -----> User, RefreshToken
+  Auth Gmail --------POST---> /api/auth/google -------------> User, RefreshToken
+  APIClient 401 -----POST---> /api/auth/refresh ------------> RefreshToken
+  IAPService --------POST---> /api/iap/verify --------------> Purchase, Module
+  Profile -----------GET----> /api/me , /me/purchases ------> User, Purchase
+  Content full ------GET----> /api/modules/:id/content -----> Purchase check
+
+
+16. BẢO MẬT — TÓM TẮT LUỒNG LIÊN QUAN
+--------------------------------------------------------------------------------
+
+  - Password: bcrypt, không lưu plain text
+  - Access token: JWT ngắn hạn, gửi Header Authorization: Bearer ...
+  - Refresh token: opaque random, chỉ lưu hash trên server, rotate khi dùng
+  - Token trên máy user: Keychain (không biometric theo yêu cầu)
+  - IAP: client mua Apple; server mới ghi quyền sở hữu
+  - Google: verify idToken (production); dev decode chỉ cho local
+  - .env secrets: không commit lên GitHub
+
+
+17. LUỒNG DEV / TEST NHANH (WINDOWS + iOS)
+--------------------------------------------------------------------------------
+
+  Windows:
+    1) Cài Node + MongoDB (chỉ trên máy Windows)
+    2) cd backend
+    3) copy .env.example .env
+    4) npm install
+    5) npm run seed     <-- tạo Gói 1
+    6) npm run dev      <-- http://0.0.0.0:4000
+
+  iOS (Mac):
+    1) Mở ios/HomeApplicationFix.xcodeproj
+    2) Sửa AppConfig.apiBaseURL = http://<IP-Windows>:4000
+    3) Run app
+    4) Guest: xem Gói 1 + demo
+    5) Mua: login email hoặc Gmail (dev)
+    6) Debug: mock IAP nếu chưa có product App Store
+    7) Profile: thấy gói đã mua
+
+
+18. TÓM TẮT 1 ĐOẠN (NHỚ NHANH)
+--------------------------------------------------------------------------------
+
+  "User mở app có thể xem danh mục và demo miễn phí. Muốn mua module
+   Non-Consumable thì phải đăng ký/đăng nhập (email hoặc Gmail). Token
+   lưu Keychain; access hết hạn thì refresh rotate. Mua qua StoreKit,
+   server verify và ghi Purchase. Profile hiển thị gói đã mua. Full
+   content chỉ mở khi server xác nhận entitlement. Thêm gói sau = thêm
+   Module + product App Store, app tự load catalog."
+
+
+================================================================================
+  Hết tài liệu luồng hoạt động
+  File: docs/LUONG_HOAT_DONG.txt
+  Repo: https://github.com/mrphansum/GAUDEN
+================================================================================
