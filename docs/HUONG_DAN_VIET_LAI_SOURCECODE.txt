@@ -1,0 +1,1299 @@
+================================================================================
+  HOME APPLICATION FIX (GAUDEN)
+  HƯỚNG DẪN VIẾT LẠI TOÀN BỘ SOURCE CODE — TỪ ĐẦU ĐẾN CUỐI
+================================================================================
+  Dành cho người học: viết lại từng file, từng class/struct/hàm để hiểu hết.
+  Repo thật (tham chiếu khi bí): github.com/mrphansum/GAUDEN
+
+  Cách học đề xuất:
+    1. Đọc PHẦN A (cách dùng guide này) + PHẦN B (kiến trúc).
+    2. Viết BACKEND trước (PHẦN C) — Windows + MongoDB.
+    3. Test API bằng curl / smoke-test.http.
+    4. Viết iOS (PHẦN D) — Xcode.
+    5. Nối end-to-end (PHẦN E), tự kiểm (PHẦN F).
+
+  Tài liệu kèm:
+    docs/LUONG_HOAT_DONG.txt     — nghiệp vụ
+    docs/DATA_FLOW.txt           — JSON / Mongo / Keychain
+    docs/CALL_CHAIN_HOC_TAP.txt  — chuỗi gọi hàm runtime
+
+  Ký hiệu trong guide:
+    [VIẾT]   = bạn tạo file này ở bước đó
+    [PHỤ THUỘC] = file/package phải có trước
+    [TRỎ TỚI] = gọi / dùng type / route nào
+    [ĐƯỢC GỌI BỞI] = ai gọi vào đây
+    (chức năng) = nhiệm vụ 1 dòng
+================================================================================
+
+
+################################################################################
+# PHẦN A — CÁCH HỌC VỚI GUIDE NÀY
+################################################################################
+
+A1. Quy tắc vàng
+  - Không copy-paste cả repo. Viết tay từng file theo thứ tự bên dưới.
+  - Mỗi file xong: tự trả lời "file này TRỎ TỚI ai? ai GỌI mình?"
+  - Backend xong 1 route thì curl ngay — đừng đợi viết hết iOS.
+  - iOS xong 1 service thì print / breakpoint — đừng đợi xong UI đẹp.
+
+A2. Cấu trúc folder bạn sẽ tạo
+
+  GAUDEN/
+  ├── README.md
+  ├── docs/                          (đã có — đọc, không bắt buộc viết lại)
+  ├── backend/
+  │   ├── package.json
+  │   ├── tsconfig.json
+  │   ├── .env.example
+  │   ├── .gitignore
+  │   ├── README.md
+  │   ├── scripts/smoke-test.http
+  │   └── src/
+  │       ├── index.ts
+  │       ├── app.ts
+  │       ├── config/env.ts
+  │       ├── models/   User | RefreshToken | Module | Purchase
+  │       ├── services/ tokenService | googleAuthService | iapService
+  │       ├── middleware/ auth | errorHandler
+  │       ├── routes/   auth | modules | iap | me
+  │       └── scripts/seed.ts
+  └── ios/
+      ├── README.md
+      ├── HomeApplicationFix.xcodeproj/
+      └── HomeApplicationFix/
+          ├── App/          HomeApplicationFixApp | RootView | AppState
+          ├── Core/
+          │   ├── Config/     AppConfig
+          │   ├── Keychain/   KeychainStore | TokenStore
+          │   ├── Localization/ L10n
+          │   ├── Models/     APIModels
+          │   ├── Networking/ APIClient
+          │   └── Services/   AuthService | ModuleService | IAPService
+          ├── Features/
+          │   ├── Auth/       AuthView | GoogleSignInHelper
+          │   ├── Catalog/    CatalogView (+ ViewModel, ModuleRow)
+          │   ├── ModuleDetail/ ModuleDetailView | ContentListView | ...
+          │   └── Profile/    ProfileView
+          └── Resources/      Info.plist | Assets | Localizable.xcstrings
+
+A3. Thứ tự “xương sống” (nhớ 1 dòng)
+
+  Config → Models → Services → Middleware/Routes → Entry
+  (backend)
+
+  Config → Keychain → Models → APIClient → Services → AppState → Views
+  (iOS)
+
+
+################################################################################
+# PHẦN B — KIẾN TRÚC TRONG ĐẦU (VIẾT TRƯỚC KHI GÕ CODE)
+################################################################################
+
+B1. Vấn đề app giải quyết
+  - Bán MODULE (Add-on / DLC) dạng Non-Consumable IAP.
+  - Guest xem DEMO; mua phải login; server giữ entitlement (Purchase).
+  - Token access ngắn + refresh dài (Keychain); không biometric.
+
+B2. Hai “source of truth”
+  - Ai là user?     → JWT sub + collection users
+  - Đã mua gói?     → collection purchases (SAU /iap/verify)
+  - Giá tiền?       → App Store (StoreKit), không hardcode trên server
+
+B3. Layer backend
+  Request HTTP
+    → middleware (helmet, cors, json, rate-limit, auth)
+    → routes (validate body, gọi service, res.json)
+    → services (logic: token, google, iap)
+    → models (Mongoose schema → MongoDB)
+
+B4. Layer iOS
+  View (SwiftUI)
+    → AppState (session UI)
+    → *Service (Auth / Module / IAP)
+    → APIClient (HTTP + refresh 401)
+    → TokenStore → KeychainStore
+    → StoreKit (chỉ khi mua)
+
+
+################################################################################
+# PHẦN C — VIẾT BACKEND TỪNG FILE (THỨ TỰ BẮT BUỘC)
+################################################################################
+
+---------------------------------------------------------------------------
+BƯỚC C0 — Scaffold project (chưa logic)
+---------------------------------------------------------------------------
+
+[VIẾT] backend/package.json
+  (chức năng) Khai báo tên project, scripts, dependencies.
+  Scripts cần có:
+    "dev": "tsx watch src/index.ts"
+    "build": "tsc"
+    "start": "node dist/index.js"
+    "seed": "tsx src/scripts/seed.ts"
+    "typecheck": "tsc --noEmit"
+  Dependencies chính:
+    express, mongoose, dotenv, zod, bcryptjs, jsonwebtoken,
+    cors, helmet, morgan, express-rate-limit, google-auth-library
+  DevDependencies: typescript, tsx, @types/*
+
+[VIẾT] backend/tsconfig.json
+  (chức năng) Biên dịch TS → dist/, strict mode, CommonJS, rootDir src.
+
+[VIẾT] backend/.gitignore
+  (chức năng) Bỏ qua node_modules/, dist/, .env
+
+[VIẾT] backend/.env.example
+  (chức năng) Mẫu biến môi trường (copy thành .env trên Windows).
+  Biến quan trọng:
+    PORT, NODE_ENV, MONGODB_URI
+    JWT_ACCESS_SECRET, JWT_REFRESH_SECRET
+    JWT_ACCESS_EXPIRES_IN, JWT_REFRESH_EXPIRES_IN
+    GOOGLE_CLIENT_ID, GOOGLE_IOS_CLIENT_ID
+    IAP_MOCK_VERIFY, CORS_ORIGIN, APPLE_BUNDLE_ID
+
+  [CHECK] copy .env.example → .env, sửa secret, npm install
+
+---------------------------------------------------------------------------
+BƯỚC C1 — config/env.ts  (load & validate env)
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/config/env.ts
+
+  import dotenv, zod
+
+  const envSchema = z.object({ ... })   (chức năng) Schema validate env
+  const parsed = envSchema.safeParse(process.env)
+  nếu fail → console.error + process.exit(1)
+
+  export const env = parsed.data
+    (chức năng) Object env an toàn type, dùng toàn project
+
+  [TRỎ TỚI] process.env, file .env (dotenv.config)
+  [ĐƯỢC GỌI BỞI] index.ts, app.ts, tokenService, googleAuth, iapService, seed
+
+  Ghi chú học:
+    - Fail-fast: thiếu secret thì đừng cho server chạy câm.
+    - IAP_MOCK_VERIFY: string "false"/"0" → boolean false.
+
+---------------------------------------------------------------------------
+BƯỚC C2 — Models (Mongo schema) — viết 4 file
+---------------------------------------------------------------------------
+
+--- C2.1 User ---
+
+[VIẾT] backend/src/models/User.ts
+
+  type AuthProvider = "local" | "google"
+
+  interface IUser extends Document
+    (chức năng) Shape 1 user trong TypeScript
+    fields: email, name, passwordHash?, googleId?, providers[], avatarUrl?,
+            createdAt, updatedAt
+
+  userSchema = new Schema(...)
+    email: unique, lowercase, index
+    passwordHash: select: false  ← mặc định query không trả hash
+    googleId: sparse unique
+    providers: ["local"|"google"]
+
+  userSchema.set("toJSON", transform xóa passwordHash, __v)
+
+  export const User = mongoose.model("User", userSchema)
+    (chức năng) Model thao tác collection users
+
+  [TRỎ TỚI] mongoose
+  [ĐƯỢC GỌI BỞI] routes/auth.ts, routes/me.ts, googleAuthService.ts
+
+--- C2.2 RefreshToken ---
+
+[VIẾT] backend/src/models/RefreshToken.ts
+
+  interface IRefreshToken
+    userId, tokenHash, expiresAt, revokedAt?, userAgent?, createdAt
+
+  Schema + index expiresAt TTL (expireAfterSeconds: 0)
+    (chức năng) Mongo tự xóa doc hết hạn (vẫn check revokedAt khi verify)
+
+  export const RefreshToken = model(...)
+
+  [ĐƯỢC GỌI BỞI] services/tokenService.ts ONLY (không routes gọi trực tiếp)
+
+  Ghi chú học:
+    - DB lưu HASH, không lưu plain refresh token.
+    - Rotation = revoke token cũ + tạo hash mới.
+
+--- C2.3 Module ---
+
+[VIẾT] backend/src/models/Module.ts
+
+  interface IContentItem
+    type: "document" | "video"
+    title, url, description?, durationSeconds?
+
+  interface IModule
+    slug, title, subtitle?, description, category
+    appleProductId   ← map IAP Non-Consumable
+    sortOrder, isPublished, coverImageUrl?
+    demoContent: IContentItem[]
+    fullContent: IContentItem[]
+
+  export const Module = model(...)
+
+  [ĐƯỢC GỌI BỞI] routes/modules.ts, routes/me.ts, iapService, seed.ts
+
+--- C2.4 Purchase ---
+
+[VIẾT] backend/src/models/Purchase.ts
+
+  type PurchaseSource = "apple_iap" | "mock" | "manual"
+
+  interface IPurchase
+    userId, moduleId, appleProductId
+    transactionId (unique), originalTransactionId?
+    source, purchasedAt
+
+  Index unique: { userId: 1, moduleId: 1 }  ← 1 user 1 module 1 lần (Non-Consumable)
+
+  export const Purchase = model(...)
+
+  [ĐƯỢC GỌI BỞI] iapService.ts, routes/me.ts
+
+---------------------------------------------------------------------------
+BƯỚC C3 — services/tokenService.ts
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/services/tokenService.ts
+
+  interface AccessPayload { sub, email, type: "access" }
+
+  function hashToken(token)           (chức năng) SHA-256 hex
+  function parseDurationToMs("15m")   (chức năng) đổi JWT expires string → ms
+
+  export function signAccessToken(userId, email)
+    (chức năng) Tạo JWT access
+    [TRỎ TỚI] jwt.sign, env.JWT_ACCESS_SECRET
+
+  export function verifyAccessToken(token)
+    (chức năng) Verify JWT; ném lỗi nếu sai/hết hạn
+    [ĐƯỢC GỌI BỞI] middleware/auth.ts requireAuth / optionalAuth
+
+  export async function issueRefreshToken(userId, userAgent?)
+    (chức năng) random token + lưu hash DB + return plain 1 lần
+    [TRỎ TỚI] RefreshToken.create, hashToken
+    [ĐƯỢC GỌI BỞI] routes/auth issueAuthResponse, rotateRefreshToken
+
+  export async function rotateRefreshToken(oldPlain, userAgent?)
+    (chức năng) Tìm hash, revoke cũ, issue mới
+    return { userId, refreshToken, expiresAt } | null
+    [ĐƯỢC GỌI BỞI] routes/auth POST /refresh
+
+  export async function revokeRefreshToken(plain)
+    (chức năng) Logout 1 phiên
+    [ĐƯỢC GỌI BỞI] routes/auth POST /logout
+
+  export async function revokeAllUserRefreshTokens(userId)
+    (chức năng) Thu hồi mọi phiên (dự phòng mở rộng)
+
+  Ghi chú học — vòng đời refresh:
+    login → issue (plain về client, hash DB)
+    401 access → rotate (cũ chết, mới sinh)
+    logout → revoke
+
+---------------------------------------------------------------------------
+BƯỚC C4 — services/googleAuthService.ts
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/services/googleAuthService.ts
+
+  interface GoogleProfile { googleId, email, name, avatarUrl?, emailVerified }
+
+  export async function verifyGoogleIdToken(idToken)
+    (chức năng) Xác thực idToken Google → profile
+    - Có GOOGLE_CLIENT_ID: OAuth2Client.verifyIdToken
+    - Dev thiếu config: decodeIdTokenUnsafeDev (CHỈ development)
+    [TRỎ TỚI] env, google-auth-library
+
+  function decodeIdTokenUnsafeDev(idToken)
+    (chức năng) Base64 decode payload JWT không verify chữ ký — DEV ONLY
+
+  export async function findOrCreateGoogleUser(profile)
+    (chức năng) Upsert User theo googleId hoặc email; link provider google
+    [TRỎ TỚI] User model
+    [ĐƯỢC GỌI BỞI] routes/auth POST /google
+
+---------------------------------------------------------------------------
+BƯỚC C5 — services/iapService.ts
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/services/iapService.ts
+
+  interface VerifyIapInput
+    userId, productId, transactionId, originalTransactionId?, signedTransaction?
+
+  interface VerifyIapResult
+    purchase, module, alreadyOwned
+
+  export async function verifyAndRecordPurchase(input)
+    (chức năng) Tâm điểm IAP server: tìm Module → verify → ghi Purchase
+    Các nhánh:
+      1. Module không tồn tại → throw 400
+      2. verifyWithAppleOrMock fail → throw 400
+      3. transactionId đã gắn user khác → 409
+      4. cùng tx / đã own module → alreadyOwned true
+      5. Purchase.create → alreadyOwned false
+    [TRỎ TỚI] Module, Purchase, env.IAP_MOCK_VERIFY
+    [ĐƯỢC GỌI BỞI] routes/iap.ts POST /verify
+
+  async function verifyWithAppleOrMock(input)
+    (chức năng) Mock dev HOẶC parse JWS skeleton production
+    [GHI CHÚ] Production thật nên dùng App Store Server Library
+
+  export async function getOwnedModuleIds(userId)
+    (chức năng) List moduleId user đã mua
+    [ĐƯỢC GỌI BỞI] routes/modules GET /
+
+  export async function userOwnsModule(userId, moduleId)
+    (chức năng) Boolean ownership
+    [ĐƯỢC GỌI BỞI] routes/modules detail + content
+
+---------------------------------------------------------------------------
+BƯỚC C6 — middleware
+---------------------------------------------------------------------------
+
+--- C6.1 auth.ts ---
+
+[VIẾT] backend/src/middleware/auth.ts
+
+  interface AuthUser { id, email }
+
+  // augment Express.Request.user?: AuthUser
+
+  export function requireAuth(req, res, next)
+    (chức năng) Bắt buộc Bearer JWT hợp lệ → req.user
+    fail → 401 JSON
+    [TRỎ TỚI] verifyAccessToken
+    [ĐƯỢC GỌI BỞI] iap / me / modules content / auth me
+
+  export function optionalAuth(req, res, next)
+    (chức năng) Có token thì gắn user; không có vẫn next()
+    [ĐƯỢC GỌI BỞI] modules list + detail (để set owned)
+
+--- C6.2 errorHandler.ts ---
+
+[VIẾT] backend/src/middleware/errorHandler.ts
+
+  export function notFound(req, res)
+    (chức năng) 404 cuối pipeline
+
+  export function errorHandler(err, req, res, next)
+    (chức năng) ZodError → 400; err.status → status; log khi dev
+    [ĐƯỢC GỌI BỞI] app.ts app.use(errorHandler) cuối cùng
+
+---------------------------------------------------------------------------
+BƯỚC C7 — routes (4 file API)
+---------------------------------------------------------------------------
+
+--- C7.1 routes/auth.ts ---
+
+[VIẾT] backend/src/routes/auth.ts
+  const router = Router()
+
+  // Schemas zod: registerSchema, loginSchema, googleSchema, refreshSchema
+
+  function publicUser(user)
+    (chức năng) Map User → object an toàn trả client (không hash)
+
+  async function issueAuthResponse(res, user, userAgent?)
+    (chức năng) signAccess + issueRefresh + res.json { user, tokens }
+    [TRỎ TỚI] signAccessToken, issueRefreshToken, publicUser
+
+  router.post("/register")
+    (chức năng) Tạo user local + trả tokens
+    [TRỎ TỚI] User.create, bcrypt.hash, issueAuthResponse
+    path full: POST /api/auth/register
+
+  router.post("/login")
+    (chức năng) So password + trả tokens
+    [TRỎ TỚI] User.findOne +select passwordHash, bcrypt.compare
+
+  router.post("/google")
+    (chức năng) idToken → profile → findOrCreate → tokens
+    [TRỎ TỚI] verifyGoogleIdToken, findOrCreateGoogleUser
+
+  router.post("/refresh")
+    (chức năng) Rotate refresh, trả access+refresh mới
+    [TRỎ TỚI] rotateRefreshToken, User.findById, signAccessToken
+
+  router.post("/logout")
+    (chức năng) Revoke refresh (nếu gửi)
+    [TRỎ TỚI] revokeRefreshToken
+
+  router.get("/me", requireAuth)
+    (chức năng) Alias user hiện tại (có thể dùng /api/me thay)
+
+  export default router
+
+--- C7.2 routes/modules.ts ---
+
+[VIẾT] backend/src/routes/modules.ts
+
+  function toListItem(m, owned)
+    (chức năng) Map Module → object list (không fullContent)
+
+  router.get("/", optionalAuth)
+    (chức năng) Catalog + categories + owned flags
+    GET /api/modules?category=
+
+  router.get("/:idOrSlug", optionalAuth)
+    (chức năng) Detail + demoContent; fullContent chỉ khi owned
+    GET /api/modules/:id
+
+  router.get("/:idOrSlug/content", requireAuth)
+    (chức năng) Full content bắt buộc own; 403 PurchaseRequired
+    GET /api/modules/:id/content
+
+  export default router
+
+  Ghi chú học — thứ tự route:
+    Khai báo GET "/" trước GET "/:id" (Express match tuần tự).
+    content route là "/:idOrSlug/content" — viết trong cùng router.
+
+--- C7.3 routes/iap.ts ---
+
+[VIẾT] backend/src/routes/iap.ts
+
+  verifySchema zod: productId, transactionId, original?, signed?
+
+  router.post("/verify", requireAuth)
+    (chức năng) Nhận tx từ app → verifyAndRecordPurchase → JSON
+    POST /api/iap/verify
+    [TRỎ TỚI] verifyAndRecordPurchase
+    [ĐƯỢC GỌI BỞI] iOS IAPService.verifyOnServer
+
+  export default router
+
+--- C7.4 routes/me.ts ---
+
+[VIẾT] backend/src/routes/me.ts
+
+  router.get("/", requireAuth)
+    (chức năng) Profile user
+    GET /api/me
+
+  router.get("/purchases", requireAuth)
+    (chức năng) List Purchase join Module cho Profile UI
+    GET /api/me/purchases
+    [TRỎ TỚI] Purchase.find, Module.find
+
+  export default router
+
+---------------------------------------------------------------------------
+BƯỚC C8 — app.ts + index.ts (lắp ráp + chạy)
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/app.ts
+
+  export function createApp()
+    (chức năng) Tạo Express app: middleware + mount routes + error handlers
+    Mount map:
+      GET  /health              → health JSON
+      /api/auth   + rate limit  → authRoutes
+      /api/modules              → modulesRoutes
+      /api/iap                  → iapRoutes
+      /api/me                   → meRoutes
+      notFound, errorHandler
+    [TRỎ TỚI] env, mọi routes + middleware
+    [ĐƯỢC GỌI BỞI] index.ts
+
+[VIẾT] backend/src/index.ts
+
+  async function main()
+    (chức năng) mongoose.connect → createApp().listen(PORT, "0.0.0.0")
+    0.0.0.0 = cho phép iPhone trong LAN gọi IP Windows
+
+  main().catch → exit 1
+
+---------------------------------------------------------------------------
+BƯỚC C9 — seed + docs backend
+---------------------------------------------------------------------------
+
+[VIẾT] backend/src/scripts/seed.ts
+
+  async function seed()
+    (chức năng) Upsert Gói 1 Module:
+      slug: module-1-home-basics
+      appleProductId: com.mrphansum.homeapplicationfix.module1
+      demoContent + fullContent (URL mẫu PDF/MP4)
+    [TRỎ TỚI] env, Module.findOneAndUpdate upsert
+
+[VIẾT] backend/README.md
+  (chức năng) Hướng dẫn Windows: install, env, seed, run, API table
+
+[VIẾT] backend/scripts/smoke-test.http (optional)
+  (chức năng) Request mẫu register/login/modules/google
+
+  [CHECK BACKEND]
+    npm run typecheck
+    npm run seed
+    npm run dev
+    curl http://localhost:4000/health
+    curl http://localhost:4000/api/modules
+
+
+################################################################################
+# PHẦN D — VIẾT iOS TỪNG FILE (THỨ TỰ BẮT BUỘC)
+################################################################################
+
+D0. Tạo Xcode project
+  - App name: Home Application Fix
+  - Bundle ID: com.mrphansum.homeapplicationfix
+  - Interface: SwiftUI, Language: Swift, iOS 16+
+  - Tạo folder groups: App, Core/..., Features/..., Resources
+  - Info.plist: ATS cho HTTP LAN (NSAllowsLocalNetworking / ArbitraryLoads dev)
+  - CFBundleDisplayName = Home Application Fix
+  - Localizations: en, vi
+  - (Optional) Localizable.xcstrings — hoặc .strings
+
+---------------------------------------------------------------------------
+BƯỚC D1 — AppConfig.swift
+---------------------------------------------------------------------------
+
+[VIẾT] Core/Config/AppConfig.swift
+
+  enum AppConfig
+    (chức năng) Hằng số cấu hình app — không logic mạng
+
+    static var apiBaseURL: URL
+      (chức năng) Base URL API
+      Simulator: http://127.0.0.1:4000
+      Device: http://<IP-Windows>:4000
+      Optional override UserDefaults "apiBaseURL"
+
+    static let bundleId
+    static let appDisplayName = "Home Application Fix"
+    static let googleIOSClientID / googleServerClientID  (để trống lúc dev)
+    static let module1ProductId
+    static let allowMockIAPInDebug = true
+
+  [ĐƯỢC GỌI BỞI] APIClient, IAPService, Auth UI, Profile about
+
+---------------------------------------------------------------------------
+BƯỚC D2 — Keychain (2 file)
+---------------------------------------------------------------------------
+
+--- D2.1 KeychainStore.swift ---
+
+[VIẾT] Core/Keychain/KeychainStore.swift
+
+  enum KeychainStore
+    static let service = "com.mrphansum.homeapplicationfix.keychain"
+
+    enum Key: String, CaseIterable
+      accessToken, refreshToken, refreshExpiresAt
+
+    static func set(_ value: String, for key: Key) -> Bool
+      (chức năng) SecItemDelete + SecItemAdd GenericPassword
+      accessibleAfterFirstUnlockThisDeviceOnly
+      KHÔNG biometric
+
+    static func get(_ key: Key) -> String?
+      (chức năng) SecItemCopyMatching → String?
+
+    static func delete(_ key: Key)
+    static func clearAll()
+      (chức năng) Xóa mọi Key trong enum
+
+  [ĐƯỢC GỌI BỞI] TokenStore only (nên qua facade)
+
+--- D2.2 TokenStore.swift ---
+
+[VIẾT] Core/Keychain/TokenStore.swift
+
+  struct TokenPair: Equatable
+    accessToken, refreshToken, refreshExpiresAt?
+
+  final class TokenStore
+    static let shared
+
+    func save(tokens: TokenDTO)
+      (chức năng) Ghi 3 key Keychain từ TokenDTO API
+      [TRỎ TỚI] KeychainStore.set, type TokenDTO (APIModels)
+
+    func loadTokens() -> TokenPair?
+      (chức năng) Đọc access+refresh; thiếu 1 cái → nil
+
+    func updateAccessToken(_ access: String)
+      (chức năng) Chỉ update access (ít dùng nếu luôn save full pair)
+
+    func clear()
+      (chức năng) clearAll Keychain — logout / session chết
+
+  [ĐƯỢC GỌI BỞI] AppState, AuthService, APIClient.tokenProvider, ModuleService (check has token)
+
+---------------------------------------------------------------------------
+BƯỚC D3 — APIModels.swift (mọi DTO)
+---------------------------------------------------------------------------
+
+[VIẾT] Core/Models/APIModels.swift
+
+  // --- Auth ---
+  struct UserDTO: Codable, Identifiable, Equatable
+    id, email, name, avatarUrl?, providers?
+    (chức năng) User trả từ server
+
+  struct TokenDTO: Codable, Equatable
+    accessToken, refreshToken, refreshExpiresAt?, tokenType?
+    (chức năng) Cặp token từ login/register/refresh
+
+  struct AuthResponse: Codable
+    user: UserDTO, tokens: TokenDTO
+    (chức năng) Body chuẩn auth endpoints
+
+  struct MeResponse: Codable
+    user: UserDTO
+
+  // --- Modules ---
+  struct ContentItemDTO: Codable, Identifiable, Equatable
+    id computed từ type+title+url
+    type, title, url, description?, durationSeconds?
+
+  struct ModuleSummary: Codable, Identifiable, Equatable, Hashable
+    (chức năng) 1 row catalog; Hashable để NavigationLink(value:)
+
+  struct ModulesResponse: Codable
+    modules: [ModuleSummary], categories: [String]
+
+  struct ModuleDetailDTO: Codable
+    fields list + demoContent + fullContent? + requiresPurchase?
+
+  struct ModuleDetailResponse: Codable
+    module: ModuleDetailDTO
+
+  struct FullContentResponse: Codable
+    moduleId, title, fullContent
+
+  // --- IAP ---
+  struct IAPVerifyRequest: Codable
+    productId, transactionId, originalTransactionId?, signedTransaction?
+
+  struct IAPVerifyResponse: Codable
+    ok, alreadyOwned, purchase?, module?
+
+  struct PurchaseDTO: Codable, Identifiable
+  struct PurchaseModuleRef: Codable
+  struct PurchasesResponse: Codable
+
+  // --- Errors ---
+  struct APIErrorBody: Codable
+    error?, message?
+
+  enum APIError: LocalizedError
+    invalidURL, http(Int,String?), decoding, unauthorized, underlying(Error)
+    (chức năng) Lỗi domain app; errorDescription cho UI toast
+
+  Ghi chú học:
+    - Tên field JSON phải khớp backend (camelCase).
+    - Viết xong DTO mới viết APIClient/decode.
+
+---------------------------------------------------------------------------
+BƯỚC D4 — APIClient.swift (HTTP trung tâm)
+---------------------------------------------------------------------------
+
+[VIẾT] Core/Networking/APIClient.swift
+
+  final class APIClient: @unchecked Sendable
+    static let shared
+    private session: URLSession
+    private refreshLock, isRefreshing
+
+    var tokenProvider: (() -> TokenPair?)?
+      (chức năng) Callback đọc token — gán từ AppState.init
+    var refreshHandler: (() async throws -> Void)?
+      (chức năng) Callback refresh — gán gọi AuthService.refreshTokens
+
+    func request<T: Decodable>(path, method, body, authorized, retryOnUnauthorized) async throws -> T
+      (chức năng) requestData + JSONDecoder → T
+      [TRỎ TỚI] requestData, AppConfig.apiBaseURL (gián tiếp)
+
+    func requestData(...) async throws -> Data
+      (chức năng) Build URLRequest → URLSession.data → handle status
+      Bước trong hàm (viết đúng thứ tự):
+        1. URL relative AppConfig.apiBaseURL
+        2. method, headers Accept/Content-Type
+        3. nếu authorized: Bearer từ tokenProvider
+        4. encode body nếu có (AnyEncodable)
+        5. session.data
+        6. nếu 401 + authorized + retry → refreshIfNeeded → gọi lại 1 lần
+        7. không 2xx → APIError
+        8. return Data
+
+    private func refreshIfNeeded() async throws
+      (chức năng) Chỉ 1 refresh tại 1 thời điểm; gọi refreshHandler
+
+  private struct AnyEncodable: Encodable
+    (chức năng) Type-erase body Encodable để encode generic
+
+  [ĐƯỢC GỌI BỞI] AuthService, ModuleService, IAPService
+
+  Ghi chú học:
+    - Mọi network iOS CHỈ đi qua class này → dễ debug 1 chỗ.
+    - retryOnUnauthorized: false khi đang gọi /auth/refresh (tránh vòng lặp).
+
+---------------------------------------------------------------------------
+BƯỚC D5 — Services (3 file)
+---------------------------------------------------------------------------
+
+--- D5.1 AuthService.swift ---
+
+[VIẾT] Core/Services/AuthService.swift
+
+  final class AuthService
+    private api: APIClient
+    private tokenStore: TokenStore
+
+    // Nested Encodable bodies:
+    struct RegisterBody { email, password, name }
+    struct LoginBody { email, password }
+    struct GoogleBody { idToken }
+    struct RefreshBody { refreshToken }
+
+    func register(...) async throws -> AuthResponse
+      POST /api/auth/register
+      [TRỎ TỚI] api.request, RegisterBody
+      [ĐƯỢC GỌI BỞI] AuthView.submit (mode register)
+
+    func login(...) async throws -> AuthResponse
+      POST /api/auth/login
+      [ĐƯỢC GỌI BỞI] AuthView.submit (mode login)
+
+    func loginWithGoogle(idToken:) async throws -> AuthResponse
+      POST /api/auth/google
+      [ĐƯỢC GỌI BỞI] AuthView.signInWithGoogle
+
+    func fetchMe() async throws -> UserDTO
+      GET /api/me authorized
+      [ĐƯỢC GỌI BỞI] AppState.bootstrap
+
+    func refreshTokens() async throws
+      (chức năng) Lấy refresh từ Keychain → POST /refresh → save tokens mới
+      [TRỎ TỚI] tokenStore.loadTokens/save, api.request retry false
+      [ĐƯỢC GỌI BỞI] APIClient.refreshHandler, AppState.bootstrap
+
+    func logout() async
+      (chức năng) Best-effort POST /logout + tokenStore.clear()
+      [ĐƯỢC GỌI BỞI] AppState.logout
+
+--- D5.2 ModuleService.swift ---
+
+[VIẾT] Core/Services/ModuleService.swift
+
+  final class ModuleService
+    private api: APIClient
+
+    func fetchModules(category: String? = nil) async throws -> ModulesResponse
+      GET /api/modules[?category=]
+      authorized nếu TokenStore có token (để owned flags)
+      [ĐƯỢC GỌI BỞI] CatalogViewModel.load, ProfileView.restore
+
+    func fetchDetail(idOrSlug:) async throws -> ModuleDetailDTO
+      GET /api/modules/:id
+      [ĐƯỢC GỌI BỞI] ModuleDetailView.load
+
+    func fetchFullContent(idOrSlug:) async throws -> FullContentResponse
+      GET /api/modules/:id/content  authorized bắt buộc
+      (dự phòng nếu UI cần load full riêng)
+
+    func fetchPurchases() async throws -> [PurchaseDTO]
+      GET /api/me/purchases
+      [ĐƯỢC GỌI BỞI] ProfileView.loadPurchases
+
+--- D5.3 IAPService.swift ---
+
+[VIẾT] Core/Services/IAPService.swift
+
+  @MainActor
+  final class IAPService: ObservableObject
+    private api: APIClient
+    @Published var isPurchasing
+    @Published var lastError
+
+    func product(for productId:) async throws -> Product?
+      (chức năng) StoreKit 2 load product (giá hiển thị)
+      [TRỎ TỚI] Product.products(for:)
+      [ĐƯỢC GỌI BỞI] ModuleDetailView.purchaseCard.task, purchase()
+
+    func purchase(productId:) async throws -> IAPVerifyResponse
+      (chức năng) Mua Non-Consumable + verify server
+      Luồng trong hàm:
+        A. có Product → product.purchase()
+             success → checkVerified → verifyOnServer → transaction.finish()
+             cancel/pending → throw APIError
+        B. không Product + DEBUG mock → mockPurchase
+      [ĐƯỢC GỌI BỞI] ModuleDetailView.buy
+
+    func restoreAndSync(productIds:) async throws
+      (chức năng) AppStore.sync + currentEntitlements → verifyOnServer từng cái
+      [ĐƯỢC GỌI BỞI] ProfileView.restore
+
+    private func verifyOnServer(...) async throws -> IAPVerifyResponse
+      POST /api/iap/verify authorized body IAPVerifyRequest
+      [TRỎ TỚI] api.request
+
+    private func mockPurchase(productId:) async throws -> IAPVerifyResponse
+      #if DEBUG sinh mock transactionId → verifyOnServer
+
+    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T
+      (chức năng) Chỉ lấy .verified; .unverified throw
+
+---------------------------------------------------------------------------
+BƯỚC D6 — L10n.swift + Localizable.xcstrings
+---------------------------------------------------------------------------
+
+[VIẾT] Core/Localization/L10n.swift
+
+  enum L10n
+    static func tr(_ key: String, _ args: CVarArg...) -> String
+      (chức năng) String(localized:) + String(format:) nếu có args
+      [TRỎ TỚI] Localizable.xcstrings keys
+
+[VIẾT] Resources/Localizable.xcstrings
+  (chức năng) Catalog chuỗi en + vi
+  Keys quan trọng (viết đủ khi làm UI):
+    common.*, tab.*, auth.*, catalog.*, module.*, iap.*, profile.*
+
+  Ghi chú: có thể tạm hardcode tiếng Việt lúc học, sau đó chuyển sang L10n.
+
+---------------------------------------------------------------------------
+BƯỚC D7 — App layer (3 file) — “bộ não” session
+---------------------------------------------------------------------------
+
+--- D7.1 AppState.swift ---
+
+[VIẾT] App/AppState.swift
+
+  @MainActor
+  final class AppState: ObservableObject
+
+  // Published state (UI bind)
+  @Published var user: UserDTO?
+  @Published var isBootstrapping
+  @Published var authPresented
+  @Published var pendingPurchaseModule: ModuleSummary?
+  @Published var toastMessage: String?
+
+  // Dependencies (giữ reference)
+  let api, tokenStore, authService, moduleService, iapService
+
+  init(api:tokenStore:)
+    (chức năng) Tạo services + GẮN callback APIClient
+    api.tokenProvider = { tokenStore.loadTokens() }
+    api.refreshHandler = { try await auth.refreshTokens() }
+    [TRỎ TỚI] AuthService, ModuleService, IAPService, APIClient, TokenStore
+
+  var isLoggedIn: Bool
+    user != nil && tokenStore.loadTokens() != nil
+
+  func bootstrap() async
+    (chức năng) Khôi phục session lúc mở app
+    [TRỎ TỚI] TokenStore, authService.fetchMe / refreshTokens
+    [ĐƯỢC GỌI BỞI] HomeApplicationFixApp.task
+
+  func applyAuth(_ response: AuthResponse)
+    (chức năng) save tokens + set user + đóng sheet auth
+    [ĐƯỢC GỌI BỞI] AuthView sau login/register/google
+
+  func logout() async
+    [TRỎ TỚI] authService.logout, clear user
+
+  func requireAuth(forPurchase module: ModuleSummary? = nil)
+    (chức năng) Mở Auth sheet; nhớ module đang muốn mua
+    [ĐƯỢC GỌI BỞI] ModuleDetailView.buy khi !isLoggedIn
+
+  func showToast(_ message: String)
+    [ĐƯỢC GỌI BỞI] AuthView, ModuleDetailView, ProfileView
+
+--- D7.2 HomeApplicationFixApp.swift ---
+
+[VIẾT] App/HomeApplicationFixApp.swift
+
+  @main
+  struct HomeApplicationFixApp: App
+    @StateObject private var appState = AppState()
+
+    var body: some Scene
+      WindowGroup {
+        RootView()
+          .environmentObject(appState)
+          .task { await appState.bootstrap() }
+      }
+
+  (chức năng) Entry point app; inject AppState toàn cây View
+  [TRỎ TỚI] RootView, AppState
+
+--- D7.3 RootView.swift ---
+
+[VIẾT] App/RootView.swift
+
+  struct RootView: View
+    @EnvironmentObject appState: AppState
+
+    body:
+      nếu isBootstrapping → ProgressView
+      else TabView:
+        CatalogView  tab explore
+        ProfileView  tab profile
+      .sheet(authPresented) → AuthView
+      .overlay toast nếu toastMessage != nil
+
+  (chức năng) Shell navigation + auth sheet + toast
+  [TRỎ TỚI] CatalogView, ProfileView, AuthView, AppState
+
+---------------------------------------------------------------------------
+BƯỚC D8 — Features/Auth
+---------------------------------------------------------------------------
+
+--- D8.1 GoogleSignInHelper.swift ---
+
+[VIẾT] Features/Auth/GoogleSignInHelper.swift
+
+  enum GoogleSignInHelper
+    enum GError: LocalizedError  cancelled | missingClient | failed
+
+    @MainActor static func getIdToken() async throws -> String
+      (chức năng) Lấy idToken gửi backend
+      Dev: presentDevGoogleForm
+      Prod: (sau này) GoogleSignIn SDK — thay body hàm này
+
+    private presentDevGoogleForm() async throws -> String
+      (chức năng) UIAlert nhập email/name → makeDevJWT
+
+    static func makeDevJWT(email:name:sub:) -> String
+      (chức năng) JWT-shaped base64 payload cho backend dev decode
+
+  [ĐƯỢC GỌI BỞI] AuthView.signInWithGoogle
+  [TRỎ TỚI] backend POST /api/auth/google
+
+--- D8.2 AuthView.swift ---
+
+[VIẾT] Features/Auth/AuthView.swift
+
+  struct AuthView: View
+    @EnvironmentObject appState
+    @Environment dismiss
+    @State mode: login | register
+    @State name, email, password, isLoading, errorMessage
+
+    body: NavigationStack + form segmented + fields + primaryButton + googleButton
+
+    private func submit() async
+      (chức năng) register hoặc login
+      [TRỎ TỚI] authService.register / login → appState.applyAuth
+
+    private func signInWithGoogle() async
+      [TRỎ TỚI] GoogleSignInHelper.getIdToken → authService.loginWithGoogle → applyAuth
+
+  [ĐƯỢC GỌI BỞI] RootView.sheet
+
+---------------------------------------------------------------------------
+BƯỚC D9 — Features/Catalog
+---------------------------------------------------------------------------
+
+[VIẾT] Features/Catalog/CatalogView.swift  (có thể 1 file gộp)
+
+  struct CatalogView: View
+    @EnvironmentObject appState
+    @StateObject vm = CatalogViewModel()
+    body: NavigationStack list modules + category chips
+    .task / .refreshable → vm.load
+    navigationDestination(ModuleSummary) → ModuleDetailView
+
+  struct ModuleRow: View
+    (chức năng) 1 hàng: icon, title, category, owned/demo badge
+    input: ModuleSummary
+
+  @MainActor
+  final class CatalogViewModel: ObservableObject
+    @Published modules, categories, selectedCategory, isLoading, errorMessage
+
+    var filteredModules: [ModuleSummary]
+      (chức năng) filter theo selectedCategory
+
+    func load(appState:) async
+      [TRỎ TỚI] appState.moduleService.fetchModules
+      gán modules + categories
+
+  [TRỎ TỚI] ModuleDetailView(moduleId:)
+  [ĐƯỢC GỌI BỞI] RootView Tab
+
+---------------------------------------------------------------------------
+BƯỚC D10 — Features/ModuleDetail
+---------------------------------------------------------------------------
+
+[VIẾT] Features/ModuleDetail/ModuleDetailView.swift
+
+  struct ModuleDetailView: View
+    let moduleId: String
+    @State detail, isLoading, errorMessage, isBuying, storePrice
+
+    .task { await load() }
+
+    private func load() async
+      [TRỎ TỚI] moduleService.fetchDetail → detail
+
+    private func content(_ detail) -> some View
+      header + description + demo section + (full | purchaseCard)
+
+    private func purchaseCard(_ detail)
+      Button → Task { await buy(detail) }
+      .task load storePrice từ iapService.product
+
+    private func buy(_ detail) async
+      **** HÀM QUAN TRỌNG NHẤT PHÍA UI ****
+      1) nếu !isLoggedIn → appState.requireAuth(forPurchase:) return
+      2) iapService.purchase(productId: detail.appleProductId)
+      3) toast success + await load() reload full content
+      [TRỎ TỚI] AppState, IAPService, load()
+
+  struct ContentListView: View
+    items: [ContentItemDTO]
+    NavigationLink → ContentPlayerView
+
+  struct ContentPlayerView: View
+    video → VideoPlayer(AVPlayer)
+    document → WebContentView (Link URL)
+
+  struct WebContentView: View
+    (chức năng) Mở tài liệu bằng Link Safari/in-app
+
+  [ĐƯỢC GỌI BỞI] CatalogView navigationDestination
+
+---------------------------------------------------------------------------
+BƯỚC D11 — Features/Profile
+---------------------------------------------------------------------------
+
+[VIẾT] Features/Profile/ProfileView.swift
+
+  struct ProfileView: View
+    @State purchases, isLoading, errorMessage
+
+    body List:
+      nếu loggedIn:
+        section user (avatar chữ cái, name, email, providers)
+        section purchases ForEach
+        section Restore + Logout
+      else:
+        guest CTA → authPresented = true
+      section About: app name + API URL
+
+    .task / .refreshable loadPurchases
+    .onChange(isLoggedIn) reload hoặc clear
+
+    private func loadPurchases() async
+      [TRỎ TỚI] moduleService.fetchPurchases
+
+    private func restore() async
+      fetchModules → productIds → iapService.restoreAndSync → loadPurchases
+
+    private func avatar(_ user) -> some View
+
+  [ĐƯỢC GỌI BỞI] RootView Tab
+
+---------------------------------------------------------------------------
+BƯỚC D12 — Resources
+---------------------------------------------------------------------------
+
+[VIẾT] Resources/Info.plist
+  Display name, orientations, UILaunchScreen, ATS local HTTP, localizations
+
+[VIẾT] Resources/Assets.xcassets
+  AppIcon, AccentColor, LaunchBackground
+
+[VIẾT] ios/README.md
+  Mở project, set API URL, IAP, Google prod
+
+
+################################################################################
+# PHẦN E — NỐI HAI PHÍA + CHECKLIST TÍCH HỢP
+################################################################################
+
+E1. Mapping endpoint ↔ iOS (bảng thuộc lòng)
+
+  Backend route                    | iOS caller
+  ---------------------------------|------------------------------------------
+  POST /api/auth/register          | AuthService.register ← AuthView.submit
+  POST /api/auth/login             | AuthService.login ← AuthView.submit
+  POST /api/auth/google            | AuthService.loginWithGoogle ← AuthView
+  POST /api/auth/refresh           | AuthService.refreshTokens ← APIClient / bootstrap
+  POST /api/auth/logout            | AuthService.logout ← AppState.logout
+  GET  /api/modules                | ModuleService.fetchModules ← CatalogVM
+  GET  /api/modules/:id            | ModuleService.fetchDetail ← ModuleDetail.load
+  GET  /api/modules/:id/content    | ModuleService.fetchFullContent (optional)
+  POST /api/iap/verify             | IAPService.verifyOnServer ← purchase/restore
+  GET  /api/me                     | AuthService.fetchMe ← bootstrap
+  GET  /api/me/purchases           | ModuleService.fetchPurchases ← Profile
+
+E2. Thứ tự test tay sau khi viết xong
+
+  Windows:
+    [ ] Mongo chạy
+    [ ] npm run seed → thấy Gói 1
+    [ ] npm run dev → /health ok
+    [ ] POST register → có tokens
+    [ ] GET /api/modules → 1 module
+    [ ] POST /iap/verify (Bearer + mock body) → purchases
+
+  iOS:
+    [ ] AppConfig.apiBaseURL đúng IP
+    [ ] Catalog hiện Gói 1
+    [ ] Demo video/doc mở được
+    [ ] Mua chưa login → sheet auth
+    [ ] Login → Keychain có token (debug print)
+    [ ] Mua mock → full content
+    [ ] Profile có gói
+    [ ] Logout → guest; login lại vẫn còn gói (server)
+
+E3. Lỗi thường gặp khi tự viết lại
+
+  1) CORS / connection refused
+     → backend listen 0.0.0.0; firewall Windows; đúng IP
+  2) ATS blocked HTTP
+     → Info.plist NSAllowsLocalNetworking / ArbitraryLoads (dev)
+  3) Decode fail
+     → field JSON backend ≠ CodingKeys iOS
+  4) 401 loop
+     → /refresh phải retryOnUnauthorized: false
+  5) Mua 403 / full null
+     → quên Bearer hoặc verify chưa tạo Purchase
+  6) Google prod fail
+     → thiếu GOOGLE_CLIENT_ID; dev JWT chỉ work khi NODE_ENV development
+
+
+################################################################################
+# PHẦN F — LỊCH VIẾT LẠI 7 NGÀY (GỢI Ý)
+################################################################################
+
+  Ngày 1: C0–C2 (scaffold + models) + seed nháp Module trong Mongo shell/Compass
+  Ngày 2: C3–C4 token + google service + unit nghĩ bằng tay hash/JWT
+  Ngày 3: C5–C8 iap + middleware + routes + app listen; curl hết auth + modules
+  Ngày 4: D0–D4 iOS config, keychain, models, APIClient; test GET modules in console
+  Ngày 5: D5–D7 services + AppState + Root shell; login email end-to-end
+  Ngày 6: D8–D10 Auth UI + Catalog + Detail demo
+  Ngày 7: D11–D12 IAP buy mock + Profile + restore + đọc lại CALL_CHAIN
+
+  Sau 7 ngày: đóng guide, mở repo gốc so diff — chỗ khác là chỗ bạn chưa hiểu.
+
+
+################################################################################
+# PHẦN G — “BẢN ĐỒ 1 TRANG” NHỚ THUỘC
+################################################################################
+
+  NGƯỜI DÙNG GÕ / CHẠM
+          |
+          v
+  [SwiftUI View]  AuthView / CatalogView / ModuleDetailView / ProfileView
+          |
+          v
+  [AppState]  session: user, auth sheet, toast
+          |
+          +--> AuthService ----+
+          +--> ModuleService --+--> APIClient --> HTTP --> Express routes
+          +--> IAPService -----+         |                    |
+                 |                       |                    v
+                 |                  TokenStore            services/*
+                 |                       |                    |
+                 v                       v                    v
+              StoreKit              KeychainStore          Mongo models
+              (Apple)               (tokens only)          User/Module/
+                                                           Purchase/
+                                                           RefreshToken
+
+  BẤM MUA (1 dòng):
+  ModuleDetailView.buy
+    → requireAuth?
+    → IAPService.purchase
+      → StoreKit/mock
+      → verifyOnServer
+        → POST /api/iap/verify
+          → requireAuth
+          → verifyAndRecordPurchase
+            → Purchase.create
+    → load() detail owned=true
+
+
+################################################################################
+# PHẦN H — CHECKLIST TỪNG FILE (IN RA ĐÁNH DẤU)
+################################################################################
+
+  BACKEND
+  [ ] package.json
+  [ ] tsconfig.json
+  [ ] .env.example / .env
+  [ ] src/config/env.ts
+  [ ] src/models/User.ts
+  [ ] src/models/RefreshToken.ts
+  [ ] src/models/Module.ts
+  [ ] src/models/Purchase.ts
+  [ ] src/services/tokenService.ts
+  [ ] src/services/googleAuthService.ts
+  [ ] src/services/iapService.ts
+  [ ] src/middleware/auth.ts
+  [ ] src/middleware/errorHandler.ts
+  [ ] src/routes/auth.ts
+  [ ] src/routes/modules.ts
+  [ ] src/routes/iap.ts
+  [ ] src/routes/me.ts
+  [ ] src/app.ts
+  [ ] src/index.ts
+  [ ] src/scripts/seed.ts
+  [ ] backend/README.md
+
+  iOS
+  [ ] Xcode project + Info.plist + Assets
+  [ ] Core/Config/AppConfig.swift
+  [ ] Core/Keychain/KeychainStore.swift
+  [ ] Core/Keychain/TokenStore.swift
+  [ ] Core/Models/APIModels.swift
+  [ ] Core/Networking/APIClient.swift
+  [ ] Core/Services/AuthService.swift
+  [ ] Core/Services/ModuleService.swift
+  [ ] Core/Services/IAPService.swift
+  [ ] Core/Localization/L10n.swift + xcstrings
+  [ ] App/AppState.swift
+  [ ] App/HomeApplicationFixApp.swift
+  [ ] App/RootView.swift
+  [ ] Features/Auth/GoogleSignInHelper.swift
+  [ ] Features/Auth/AuthView.swift
+  [ ] Features/Catalog/CatalogView.swift (+ VM, ModuleRow)
+  [ ] Features/ModuleDetail/ModuleDetailView.swift (+ content views)
+  [ ] Features/Profile/ProfileView.swift
+  [ ] ios/README.md
+
+
+################################################################################
+# PHẦN I — NGUYÊN TẮC KHI VIẾT LẠI (KỸ SƯ GIỎI LÀM GÌ)
+################################################################################
+
+  1. Boundary rõ: View không gọi URLSession; View không đụng Mongo.
+  2. Secret không hardcode production; .env / Keychain đúng chỗ.
+  3. Server là trọng tài ownership — client chỉ là UX.
+  4. Idempotent IAP: verify 2 lần không tạo 2 purchase lỗi.
+  5. Refresh rotate: token cũ chết ngay khi dùng.
+  6. Lỗi có message; HTTP status có nghĩa; UI empty/loading/error đủ 3 trạng thái.
+  7. Module-first: thêm gói = data + App Store product, không fork app.
+  8. Viết comment “tại sao” (why), không comment “code làm gì” hiển nhiên.
+  9. Mỗi PR/ngày chỉ 1 vertical slice (vd: login end-to-end) thay vì 20 file nửa vời.
+ 10. Đọc CALL_CHAIN khi debug; đọc DATA_FLOW khi sai JSON; đọc LUONG khi sai nghiệp vụ.
+
+
+================================================================================
+  HẾT HƯỚNG DẪN VIẾT LẠI SOURCE
+  File: docs/HUONG_DAN_VIET_LAI_SOURCECODE.txt
+
+  Lộ trình đọc docs:
+    1) HUONG_DAN_VIET_LAI_SOURCECODE.txt  ← bạn đang ở đây (viết theo thứ tự)
+    2) CALL_CHAIN_HOC_TAP.txt             ← khi cần biết runtime gọi hàm nào
+    3) DATA_FLOW.txt                      ← khi cần biết JSON/Mongo field
+    4) LUONG_HOAT_DONG.txt                ← khi cần nghiệp vụ tổng
+
+  Chúc bạn viết lại xong và hiểu hết hệ thống.
+================================================================================

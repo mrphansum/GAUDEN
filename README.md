@@ -85,9 +85,10 @@ Xem chi tiết: [`ios/README.md`](ios/README.md)
 
 | File | Nội dung |
 |------|----------|
+| [`docs/HUONG_DAN_VIET_LAI_SOURCECODE.txt`](docs/HUONG_DAN_VIET_LAI_SOURCECODE.txt) | **Viết lại từ đầu**: từng file, class, struct, hàm + trỏ tới đâu (lộ trình chính) |
 | [`docs/LUONG_HOAT_DONG.txt`](docs/LUONG_HOAT_DONG.txt) | Luồng nghiệp vụ / ai được làm gì |
 | [`docs/DATA_FLOW.txt`](docs/DATA_FLOW.txt) | JSON, Mongo, Keychain, source of truth |
-| [`docs/CALL_CHAIN_HOC_TAP.txt`](docs/CALL_CHAIN_HOC_TAP.txt) | **Call chain**: hàm nào → qua đâu → server (dùng để học trace code) |
+| [`docs/CALL_CHAIN_HOC_TAP.txt`](docs/CALL_CHAIN_HOC_TAP.txt) | Call chain runtime: UI → Service → API → Mongo |
 
 ## Ghi chú production
 
